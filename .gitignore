@@ -4,6 +4,7 @@ __pycache__/
 venv/
 .ipynb_checkpoints/
 
+!docker-compose.yml
 /*.yml
 !/default_config.yml
 /bert/*/*.bin
