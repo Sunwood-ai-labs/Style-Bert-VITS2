@@ -4,9 +4,9 @@ services:
   app:
     build: .
     volumes:
-      - .:/work
+      - .:/app
     ports:
       - "8000:8000"
       - "5000:5000"
-    # tty: true
+    # tty: trueg
     command: python /app/Style-Bert-VITS2-JVNW/server_fastapi.py
