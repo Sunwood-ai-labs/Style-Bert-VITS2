@@ -29,3 +29,9 @@ venv/
 safetensors.ipynb
 Data/**/**/*.wav
 Data/**/**/*.txt
+Data/**/**/*.log
+Data/**/**/*list*
+Data/**/**/*.pth
+Data/**/**/*events*
+Data/**/**/wavs
+Data/**/**/models
