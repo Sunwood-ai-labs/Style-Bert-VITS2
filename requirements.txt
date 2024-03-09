@@ -27,3 +27,4 @@ tensorboard
 torch>=2.1,<2.2 # For users without GPU or colab
 transformers
 umap-learn
+streamlit
