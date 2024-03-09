@@ -5,8 +5,31 @@ services:
     build: .
     volumes:
       - .:/work
+      - ./Data:/Data
+      - ./model_assets:/model_assets
     ports:
       - "7878:7860"
+    tty: true
+    command: python app.py --share --server-name 0.0.0.0
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+
+  train_app:
+    build:
+      context: .
+      dockerfile: Dockerfile_train
+    volumes:
+      - .:/work
+      - ./Data:/Data
+      - ./model_assets:/model_assets
+    ports:
+      - "8590:8501"
     tty: true
     command: python app.py --share --server-name 0.0.0.0
 
