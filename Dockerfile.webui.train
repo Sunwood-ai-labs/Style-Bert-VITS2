@@ -1,0 +1,19 @@
+# Pythonのベースイメージを使用
+FROM python:3.11-slim
+
+
+# 作業ディレクトリを設定
+WORKDIR /app
+
+# Git LFSのインストール
+RUN apt-get update && \
+    apt-get install -y git-lfs && \
+    git lfs install
+
+
+COPY . .
+
+# Pythonの依存関係をインストール
+RUN pip install -r requirements.txt
+RUN pip install streamlit
+# RUN python initialize.py --skip_jvnv
