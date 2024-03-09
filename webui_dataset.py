@@ -4,6 +4,7 @@ import os
 import gradio as gr
 import yaml
 
+from common.constants import GRADIO_THEME
 from common.log import logger
 from common.subprocess_utils import run_script_with_log
 
@@ -24,11 +25,10 @@ def do_slice(
     if model_name == "":
         return "Error: モデル名を入力してください。"
     logger.info("Start slicing...")
-    output_dir = os.path.join(dataset_root, model_name, "raw")
     cmd = [
         "slice.py",
-        "--output_dir",
-        output_dir,
+        "--model_name",
+        model_name,
         "--min_sec",
         str(min_sec),
         "--max_sec",
@@ -46,24 +46,15 @@ def do_slice(
 
 
 def do_transcribe(
-    model_name, whisper_model, compute_type, language, initial_prompt, input_dir, device
+    model_name, whisper_model, compute_type, language, initial_prompt, device
 ):
     if model_name == "":
         return "Error: モデル名を入力してください。"
-    if initial_prompt == "":
-        initial_prompt = "こんにちは。元気、ですかー？私は……ふふっ、ちゃんと元気だよ！"
-    # logger.debug(f"initial_prompt: {initial_prompt}")
-    if input_dir == "":
-        input_dir = os.path.join(dataset_root, model_name, "raw")
-    output_file = os.path.join(dataset_root, model_name, "esd.list")
+
     success, message = run_script_with_log(
         [
             "transcribe.py",
-            "--input_dir",
-            input_dir,
-            "--output_file",
-            output_file,
-            "--speaker_name",
+            "--model_name",
             model_name,
             "--model",
             whisper_model,
@@ -115,7 +106,7 @@ Style-Bert-VITS2の学習用データセットを作成するためのツール�
 - 手動で書き起こしをいろいろ修正したり結果を細かく確認したい場合は、[Aivis Dataset](https://github.com/litagin02/Aivis-Dataset)もおすすめします。書き起こし部分もかなり工夫されています。ですがファイル数が多い場合などは、このツールで簡易的に切り出してデータセットを作るだけでも十分という気もしています。
 """
 
-with gr.Blocks(theme="NoCrypt/miku") as app:
+with gr.Blocks(theme=GRADIO_THEME) as app:
     gr.Markdown(initial_md)
     model_name = gr.Textbox(
         label="モデル名を入力してください（話者名としても使われます）。"
@@ -153,9 +144,6 @@ with gr.Blocks(theme="NoCrypt/miku") as app:
             result1 = gr.Textbox(label="結果")
     with gr.Row():
         with gr.Column():
-            raw_dir = gr.Textbox(
-                label="書き起こしたい音声ファイルが入っているフォルダ（スライスした場合など、`Data/{モデル名}/raw`の場合は省略可",
-            )
             whisper_model = gr.Dropdown(
                 ["tiny", "base", "small", "medium", "large", "large-v2", "large-v3"],
                 label="Whisperモデル",
@@ -179,8 +167,8 @@ with gr.Blocks(theme="NoCrypt/miku") as app:
             language = gr.Dropdown(["ja", "en", "zh"], value="ja", label="言語")
             initial_prompt = gr.Textbox(
                 label="初期プロンプト",
-                placeholder="こんにちは。元気、ですかー？ふふっ、私は……ちゃんと元気だよ！",
-                info="このように書き起こしてほしいという例文、日本語なら省略可、英語等なら書いてください",
+                value="こんにちは。元気、ですかー？ふふっ、私は……ちゃんと元気だよ！",
+                info="このように書き起こしてほしいという例文（句読点の入れ方・笑い方・固有名詞等）",
             )
         transcribe_button = gr.Button("音声の文字起こし")
         result2 = gr.Textbox(label="結果")
@@ -197,7 +185,6 @@ with gr.Blocks(theme="NoCrypt/miku") as app:
             compute_type,
             language,
             initial_prompt,
-            raw_dir,
             device,
         ],
         outputs=[result2],

@@ -54,7 +54,10 @@ def get_text(
     given_tone=None,
 ):
     use_jp_extra = hps.version.endswith("JP-Extra")
-    norm_text, phone, tone, word2ph = clean_text(text, language_str, use_jp_extra)
+    # 推論のときにのみ呼び出されるので、raise_yomi_errorはFalseに設定
+    norm_text, phone, tone, word2ph = clean_text(
+        text, language_str, use_jp_extra, raise_yomi_error=False
+    )
     if given_tone is not None:
         if len(given_tone) != len(phone):
             raise InvalidToneError(
@@ -71,7 +74,12 @@ def get_text(
             word2ph[i] = word2ph[i] * 2
         word2ph[0] += 1
     bert_ori = get_bert(
-        norm_text, word2ph, language_str, device, assist_text, assist_text_weight
+        norm_text,
+        word2ph,
+        language_str,
+        device,
+        assist_text,
+        assist_text_weight,
     )
     del word2ph
     assert bert_ori.shape[-1] == len(phone), phone

@@ -2,18 +2,19 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import socket
+import subprocess
 import sys
 import time
 import webbrowser
 from datetime import datetime
 from multiprocessing import cpu_count
+from pathlib import Path
 
 import gradio as gr
 import yaml
 
-from common.constants import LATEST_VERSION
+from common.constants import GRADIO_THEME, LATEST_VERSION
 from common.log import logger
 from common.stdout_wrapper import SAFE_STDOUT
 from common.subprocess_utils import run_script_with_log, second_elem_of
@@ -43,12 +44,13 @@ def initialize(
     batch_size,
     epochs,
     save_every_steps,
-    bf16_run,
     freeze_EN_bert,
     freeze_JP_bert,
     freeze_ZH_bert,
     freeze_style,
+    freeze_decoder,
     use_jp_extra,
+    log_interval,
 ):
     global logger_handler
     dataset_path, _, train_path, val_path, config_path = get_path(model_name)
@@ -61,7 +63,7 @@ def initialize(
     logger_handler = logger.add(os.path.join(dataset_path, file_name))
 
     logger.info(
-        f"Step 1: start initialization...\nmodel_name: {model_name}, batch_size: {batch_size}, epochs: {epochs}, save_every_steps: {save_every_steps}, bf16_run: {bf16_run}, freeze_ZH_bert: {freeze_ZH_bert}, freeze_JP_bert: {freeze_JP_bert}, freeze_EN_bert: {freeze_EN_bert}, freeze_style: {freeze_style}, use_jp_extra: {use_jp_extra}"
+        f"Step 1: start initialization...\nmodel_name: {model_name}, batch_size: {batch_size}, epochs: {epochs}, save_every_steps: {save_every_steps}, freeze_ZH_bert: {freeze_ZH_bert}, freeze_JP_bert: {freeze_JP_bert}, freeze_EN_bert: {freeze_EN_bert}, freeze_style: {freeze_style}, freeze_decoder: {freeze_decoder}, use_jp_extra: {use_jp_extra}"
     )
 
     default_config_path = (
@@ -75,17 +77,22 @@ def initialize(
     config["data"]["validation_files"] = val_path
     config["train"]["batch_size"] = batch_size
     config["train"]["epochs"] = epochs
-    config["train"]["bf16_run"] = bf16_run
     config["train"]["eval_interval"] = save_every_steps
+    config["train"]["log_interval"] = log_interval
 
     config["train"]["freeze_EN_bert"] = freeze_EN_bert
     config["train"]["freeze_JP_bert"] = freeze_JP_bert
     config["train"]["freeze_ZH_bert"] = freeze_ZH_bert
     config["train"]["freeze_style"] = freeze_style
+    config["train"]["freeze_decoder"] = freeze_decoder
+
+    config["train"]["bf16_run"] = False  # デフォルトでFalseのはずだが念のため
 
     model_path = os.path.join(dataset_path, "models")
     if os.path.exists(model_path):
-        logger.warning(f"Step 1: {model_path} already exists, so copy it to backup.")
+        logger.warning(
+            f"Step 1: {model_path} already exists, so copy it to backup to {model_path}_backup"
+        )
         shutil.copytree(
             src=model_path,
             dst=os.path.join(dataset_path, "models_backup"),
@@ -148,7 +155,7 @@ def resample(model_name, normalize, trim, num_processes):
     return True, "Step 2, Success: 音声ファイルの前処理が完了しました"
 
 
-def preprocess_text(model_name, use_jp_extra):
+def preprocess_text(model_name, use_jp_extra, val_per_lang, yomi_error):
     logger.info("Step 3: start preprocessing text...")
     dataset_path, lbl_path, train_path, val_path, config_path = get_path(model_name)
     try:
@@ -156,13 +163,20 @@ def preprocess_text(model_name, use_jp_extra):
     except FileNotFoundError:
         logger.error(f"Step 3: {lbl_path} not found.")
         return False, f"Step 3, Error: 書き起こしファイル {lbl_path} が見つかりません。"
-    with open(lbl_path, "w", encoding="utf-8") as f:
-        for line in lines:
-            path, spk, language, text = line.strip().split("|")
-            path = os.path.join(dataset_path, "wavs", os.path.basename(path)).replace(
-                "\\", "/"
+    new_lines = []
+    for line in lines:
+        if len(line.strip().split("|")) != 4:
+            logger.error(f"Step 3: {lbl_path} has invalid format at line:\n{line}")
+            return (
+                False,
+                f"Step 3, Error: 書き起こしファイル次の行の形式が不正です:\n{line}",
             )
-            f.writelines(f"{path}|{spk}|{language}|{text}\n")
+        path, spk, language, text = line.strip().split("|")
+        # pathをファイル名だけ取り出して正しいパスに変更
+        path = Path(dataset_path) / "wavs" / Path(path).name
+        new_lines.append(f"{path}|{spk}|{language}|{text}\n")
+    with open(lbl_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
     cmd = [
         "preprocess_text.py",
         "--config-path",
@@ -173,6 +187,10 @@ def preprocess_text(model_name, use_jp_extra):
         train_path,
         "--val-path",
         val_path,
+        "--val-per-lang",
+        str(val_per_lang),
+        "--yomi_error",
+        yomi_error,
     ]
     if use_jp_extra:
         cmd.append("--use_jp_extra")
@@ -251,7 +269,6 @@ def preprocess_all(
     batch_size,
     epochs,
     save_every_steps,
-    bf16_run,
     num_processes,
     normalize,
     trim,
@@ -259,34 +276,52 @@ def preprocess_all(
     freeze_JP_bert,
     freeze_ZH_bert,
     freeze_style,
+    freeze_decoder,
     use_jp_extra,
+    val_per_lang,
+    log_interval,
+    yomi_error,
 ):
     if model_name == "":
         return False, "Error: モデル名を入力してください"
     success, message = initialize(
-        model_name,
-        batch_size,
-        epochs,
-        save_every_steps,
-        bf16_run,
-        freeze_EN_bert,
-        freeze_JP_bert,
-        freeze_ZH_bert,
-        freeze_style,
-        use_jp_extra,
+        model_name=model_name,
+        batch_size=batch_size,
+        epochs=epochs,
+        save_every_steps=save_every_steps,
+        freeze_EN_bert=freeze_EN_bert,
+        freeze_JP_bert=freeze_JP_bert,
+        freeze_ZH_bert=freeze_ZH_bert,
+        freeze_style=freeze_style,
+        freeze_decoder=freeze_decoder,
+        use_jp_extra=use_jp_extra,
+        log_interval=log_interval,
     )
     if not success:
         return False, message
-    success, message = resample(model_name, normalize, trim, num_processes)
+    success, message = resample(
+        model_name=model_name,
+        normalize=normalize,
+        trim=trim,
+        num_processes=num_processes,
+    )
     if not success:
         return False, message
-    success, message = preprocess_text(model_name, use_jp_extra)
+
+    success, message = preprocess_text(
+        model_name=model_name,
+        use_jp_extra=use_jp_extra,
+        val_per_lang=val_per_lang,
+        yomi_error=yomi_error,
+    )
     if not success:
         return False, message
-    success, message = bert_gen(model_name)  # bert_genは重いのでプロセス数いじらない
+    success, message = bert_gen(
+        model_name=model_name
+    )  # bert_genは重いのでプロセス数いじらない
     if not success:
         return False, message
-    success, message = style_gen(model_name, num_processes)
+    success, message = style_gen(model_name=model_name, num_processes=num_processes)
     if not success:
         return False, message
     logger.success("Success: All preprocess finished!")
@@ -376,7 +411,7 @@ initial_md = f"""
 
 - 途中から学習を再開する場合は、モデル名を入力してから「学習を開始する」を押せばよいです。
 
-注意: 音声合成で使うには、スタイルベクトルファイル`style_vectors.npy`を作る必要があります。これは、`Style.bat`を実行してそこで作成してください。
+注意: 標準スタイル以外のスタイルを音声合成で使うには、スタイルベクトルファイル`style_vectors.npy`を作る必要があります。これは、`Style.bat`を実行してそこで作成してください。
 動作は軽いはずなので、学習中でも実行でき、何度でも繰り返して試せます。
 
 ## JP-Extra版について
@@ -416,7 +451,7 @@ english_teacher.wav|Mary|EN|How are you? I'm fine, thank you, and you?
 """
 
 if __name__ == "__main__":
-    with gr.Blocks(theme="NoCrypt/miku").queue() as app:
+    with gr.Blocks(theme=GRADIO_THEME).queue() as app:
         gr.Markdown(initial_md)
         with gr.Accordion(label="データの前準備", open=False):
             gr.Markdown(prepare_md)
@@ -430,7 +465,8 @@ if __name__ == "__main__":
                 )
                 batch_size = gr.Slider(
                     label="バッチサイズ",
-                    value=4,
+                    info="学習速度が遅い場合は小さくして試し、VRAMに余裕があれば大きくしてください。JP-Extra版でのVRAM使用量目安: 1: 6GB, 2: 8GB, 3: 10GB, 4: 12GB",
+                    value=2,
                     minimum=1,
                     maximum=64,
                     step=1,
@@ -459,12 +495,16 @@ if __name__ == "__main__":
                     label="音声の最初と最後の無音を取り除く",
                     value=False,
                 )
+                yomi_error = gr.Radio(
+                    label="書き起こしが読めないファイルの扱い",
+                    choices=[
+                        ("エラー出たらテキスト前処理が終わった時点で中断", "raise"),
+                        ("読めないファイルは使わず続行", "skip"),
+                        ("読めないファイルも無理やり読んで学習に使う", "use"),
+                    ],
+                    value="raise",
+                )
                 with gr.Accordion("詳細設定", open=False):
-                    bf16_run = gr.Checkbox(
-                        label="bfloat16を使う",
-                        info="bfloat16を使うかどうか。オンにすると学習が発散する可能性がありますが、メモリ使用量が減る可能性があります。",
-                        value=False,
-                    )
                     num_processes = gr.Slider(
                         label="プロセス数",
                         info="前処理時の並列処理プロセス数、前処理でフリーズしたら下げてください",
@@ -472,6 +512,22 @@ if __name__ == "__main__":
                         minimum=1,
                         maximum=cpu_count(),
                         step=1,
+                    )
+                    val_per_lang = gr.Slider(
+                        label="検証データ数",
+                        info="学習には使われず、tensorboardで元音声と合成音声を比較するためのもの",
+                        value=0,
+                        minimum=0,
+                        maximum=100,
+                        step=1,
+                    )
+                    log_interval = gr.Slider(
+                        label="Tensorboardのログ出力間隔",
+                        info="Tensorboardで詳しく見たい人は小さめにしてください",
+                        value=200,
+                        minimum=10,
+                        maximum=1000,
+                        step=10,
                     )
                     gr.Markdown("学習時に特定の部分を凍結させるかどうか")
                     freeze_EN_bert = gr.Checkbox(
@@ -490,6 +546,10 @@ if __name__ == "__main__":
                         label="スタイル部分を凍結",
                         value=False,
                     )
+                    freeze_decoder = gr.Checkbox(
+                        label="デコーダ部分を凍結",
+                        value=False,
+                    )
 
             with gr.Column():
                 preprocess_button = gr.Button(
@@ -502,11 +562,11 @@ if __name__ == "__main__":
                     gr.Markdown(value="#### Step 1: 設定ファイルの生成")
                     use_jp_extra_manual = gr.Checkbox(
                         label="JP-Extra版を使う",
-                        value=False,
+                        value=True,
                     )
                     batch_size_manual = gr.Slider(
                         label="バッチサイズ",
-                        value=4,
+                        value=2,
                         minimum=1,
                         maximum=64,
                         step=1,
@@ -525,9 +585,12 @@ if __name__ == "__main__":
                         maximum=10000,
                         step=100,
                     )
-                    bf16_run_manual = gr.Checkbox(
-                        label="bfloat16を使う",
-                        value=False,
+                    log_interval_manual = gr.Slider(
+                        label="Tensorboardのログ出力間隔",
+                        value=200,
+                        minimum=10,
+                        maximum=1000,
+                        step=10,
                     )
                     freeze_EN_bert_manual = gr.Checkbox(
                         label="英語bert部分を凍結",
@@ -543,6 +606,10 @@ if __name__ == "__main__":
                     )
                     freeze_style_manual = gr.Checkbox(
                         label="スタイル部分を凍結",
+                        value=False,
+                    )
+                    freeze_decoder_manual = gr.Checkbox(
+                        label="デコーダ部分を凍結",
                         value=False,
                     )
                 with gr.Column():
@@ -572,6 +639,22 @@ if __name__ == "__main__":
             with gr.Row(variant="panel"):
                 with gr.Column():
                     gr.Markdown(value="#### Step 3: 書き起こしファイルの前処理")
+                    val_per_lang_manual = gr.Slider(
+                        label="検証データ数",
+                        value=0,
+                        minimum=0,
+                        maximum=100,
+                        step=1,
+                    )
+                    yomi_error_manual = gr.Radio(
+                        label="書き起こしが読めないファイルの扱い",
+                        choices=[
+                            ("エラー出たらテキスト前処理が終わった時点で中断", "raise"),
+                            ("読めないファイルは使わず続行", "skip"),
+                            ("読めないファイルも無理やり読んで学習に使う", "use"),
+                        ],
+                        value="raise",
+                    )
                 with gr.Column():
                     preprocess_text_btn = gr.Button(value="実行", variant="primary")
                     info_preprocess_text = gr.Textbox(label="状況")
@@ -612,6 +695,9 @@ if __name__ == "__main__":
             )
             train_btn = gr.Button(value="学習を開始する", variant="primary")
             tensorboard_btn = gr.Button(value="Tensorboardを開く")
+        gr.Markdown(
+            "進捗はターミナルで確認してください。結果は指定したステップごとに随時保存されており、また学習を途中から再開することもできます。学習を終了するには単にターミナルを終了してください。"
+        )
         info_train = gr.Textbox(label="状況")
 
         preprocess_button.click(
@@ -621,7 +707,6 @@ if __name__ == "__main__":
                 batch_size,
                 epochs,
                 save_every_steps,
-                bf16_run,
                 num_processes,
                 normalize,
                 trim,
@@ -629,7 +714,11 @@ if __name__ == "__main__":
                 freeze_JP_bert,
                 freeze_ZH_bert,
                 freeze_style,
+                freeze_decoder,
                 use_jp_extra,
+                val_per_lang,
+                log_interval,
+                yomi_error,
             ],
             outputs=[info_all],
         )
@@ -642,12 +731,13 @@ if __name__ == "__main__":
                 batch_size_manual,
                 epochs_manual,
                 save_every_steps_manual,
-                bf16_run_manual,
                 freeze_EN_bert_manual,
                 freeze_JP_bert_manual,
                 freeze_ZH_bert_manual,
                 freeze_style_manual,
+                freeze_decoder_manual,
                 use_jp_extra_manual,
+                log_interval_manual,
             ],
             outputs=[info_init],
         )
@@ -663,7 +753,12 @@ if __name__ == "__main__":
         )
         preprocess_text_btn.click(
             second_elem_of(preprocess_text),
-            inputs=[model_name, use_jp_extra_manual],
+            inputs=[
+                model_name,
+                use_jp_extra_manual,
+                val_per_lang_manual,
+                yomi_error_manual,
+            ],
             outputs=[info_preprocess_text],
         )
         bert_gen_btn.click(

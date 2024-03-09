@@ -2,6 +2,7 @@
 # compatible with Julius https://github.com/julius-speech/segmentation-kit
 import re
 import unicodedata
+from pathlib import Path
 
 import pyopenjtalk
 from num2words import num2words
@@ -14,6 +15,11 @@ from text.japanese_mora_list import (
     mora_phonemes_to_mora_kata,
 )
 
+from text.user_dict import update_dict
+
+# 最初にpyopenjtalkの辞書を更新
+update_dict()
+
 # 子音の集合
 COSONANTS = set(
     [
@@ -25,6 +31,16 @@ COSONANTS = set(
 
 # 母音の集合、便宜上「ん」を含める
 VOWELS = {"a", "i", "u", "e", "o", "N"}
+
+
+class YomiError(Exception):
+    """
+    OpenJTalkで、読みが正しく取得できない箇所があるときに発生する例外。
+    基本的に「学習の前処理のテキスト処理時」には発生させ、そうでない場合は、
+    ignore_yomi_error=Trueにしておいて、この例外を発生させないようにする。
+    """
+
+    pass
 
 
 # 正規化で記号を変換するための辞書
@@ -59,8 +75,22 @@ rep_map = {
     "】": "'",
     "[": "'",
     "]": "'",
-    "—": "-",
-    "−": "-",
+    # NFKC正規化後のハイフン・ダッシュの変種を全て通常半角ハイフン - \u002d に変換
+    "\u02d7": "\u002d",  # ˗, Modifier Letter Minus Sign
+    "\u2010": "\u002d",  # ‐, Hyphen,
+    # "\u2011": "\u002d",  # ‑, Non-Breaking Hyphen, NFKCにより\u2010に変換される
+    "\u2012": "\u002d",  # ‒, Figure Dash
+    "\u2013": "\u002d",  # –, En Dash
+    "\u2014": "\u002d",  # —, Em Dash
+    "\u2015": "\u002d",  # ―, Horizontal Bar
+    "\u2043": "\u002d",  # ⁃, Hyphen Bullet
+    "\u2212": "\u002d",  # −, Minus Sign
+    "\u23af": "\u002d",  # ⎯, Horizontal Line Extension
+    "\u23e4": "\u002d",  # ⏤, Straightness
+    "\u2500": "\u002d",  # ─, Box Drawings Light Horizontal
+    "\u2501": "\u002d",  # ━, Box Drawings Heavy Horizontal
+    "\u2e3a": "\u002d",  # ⸺, Two-Em Dash
+    "\u2e3b": "\u002d",  # ⸻, Three-Em Dash
     # "～": "-",  # これは長音記号「ー」として扱うよう変更
     # "~": "-",  # これも長音記号「ー」として扱うよう変更
     "「": "'",
@@ -146,7 +176,7 @@ def japanese_convert_numbers_to_words(text: str) -> str:
 
 
 def g2p(
-    norm_text: str, use_jp_extra: bool = True
+    norm_text: str, use_jp_extra: bool = True, raise_yomi_error: bool = False
 ) -> tuple[list[str], list[int], list[int]]:
     """
     他で使われるメインの関数。`text_normalize()`で正規化された`norm_text`を受け取り、
@@ -155,7 +185,10 @@ def g2p(
     - word2ph: 元のテキストの各文字に音素が何個割り当てられるかを表すリスト
     のタプルを返す。
     ただし`phones`と`tones`の最初と終わりに`_`が入り、応じて`word2ph`の最初と最後に1が追加される。
+
     use_jp_extra: Falseの場合、「ん」の音素を「N」ではなく「n」とする。
+    raise_yomi_error: Trueの場合、読めない文字があるときに例外を発生させる。
+    Falseの場合は読めない文字が消えたような扱いとして処理される。
     """
     # pyopenjtalkのフルコンテキストラベルを使ってアクセントを取り出すと、punctuationの位置が消えてしまい情報が失われてしまう：
     # 「こんにちは、世界。」と「こんにちは！世界。」と「こんにちは！！！？？？世界……。」は全て同じになる。
@@ -166,9 +199,9 @@ def g2p(
     # punctuationがすべて消えた、音素とアクセントのタプルのリスト（「ん」は「N」）
     phone_tone_list_wo_punct = g2phone_tone_wo_punct(norm_text)
 
-    # sep_text: 単語単位の単語のリスト
+    # sep_text: 単語単位の単語のリスト、読めない文字があったらraise_yomi_errorなら例外、そうでないなら読めない文字が消えて返ってくる
     # sep_kata: 単語単位の単語のカタカナ読みのリスト
-    sep_text, sep_kata = text2sep_kata(norm_text)
+    sep_text, sep_kata = text2sep_kata(norm_text, raise_yomi_error=raise_yomi_error)
 
     # sep_phonemes: 各単語ごとの音素のリストのリスト
     sep_phonemes = handle_long([kata2phoneme_list(i) for i in sep_kata])
@@ -218,7 +251,11 @@ def g2p(
 
 
 def g2kata_tone(norm_text: str) -> list[tuple[str, int]]:
-    phones, tones, _ = g2p(norm_text, use_jp_extra=True)
+    """
+    テキストからカタカナとアクセントのペアのリストを返す。
+    推論時のみに使われるので、常に`raise_yomi_error=False`でg2pを呼ぶ。
+    """
+    phones, tones, _ = g2p(norm_text, use_jp_extra=True, raise_yomi_error=False)
     return phone_tone2kata_tone(list(zip(phones, tones)))
 
 
@@ -311,7 +348,9 @@ def g2phone_tone_wo_punct(text: str) -> list[tuple[str, int]]:
     return result
 
 
-def text2sep_kata(norm_text: str) -> tuple[list[str], list[str]]:
+def text2sep_kata(
+    norm_text: str, raise_yomi_error: bool = False
+) -> tuple[list[str], list[str]]:
     """
     `text_normalize`で正規化済みの`norm_text`を受け取り、それを単語分割し、
     分割された単語リストとその読み（カタカナor記号1文字）のリストのタプルを返す。
@@ -319,6 +358,9 @@ def text2sep_kata(norm_text: str) -> tuple[list[str], list[str]]:
     例:
     `私はそう思う!って感じ?` →
     ["私", "は", "そう", "思う", "!", "って", "感じ", "?"], ["ワタシ", "ワ", "ソー", "オモウ", "!", "ッテ", "カンジ", "?"]
+
+    raise_yomi_error: Trueの場合、読めない文字があるときに例外を発生させる。
+    Falseの場合は読めない文字が消えたような扱いとして処理される。
     """
     # parsed: OpenJTalkの解析結果
     parsed = pyopenjtalk.run_frontend(norm_text)
@@ -336,7 +378,8 @@ def text2sep_kata(norm_text: str) -> tuple[list[str], list[str]]:
             （カタカナからなり、長音記号も含みうる、`アー` 等）
         - `word`が`ー` から始まる → `ーラー` や `ーーー` など
         - `word`が句読点や空白等 → `、`
-        - `word`が`?` → `？`（全角になる）
+        - `word`がpunctuationの繰り返し → 全角にしたもの
+        基本的にpunctuationは1文字ずつ分かれるが、何故かある程度連続すると1つにまとまる。
         他にも`word`が読めないキリル文字アラビア文字等が来ると`、`になるが、正規化でこの場合は起きないはず。
         また元のコードでは`yomi`が空白の場合の処理があったが、これは起きないはず。
         処理すべきは`yomi`が`、`の場合のみのはず。
@@ -344,16 +387,12 @@ def text2sep_kata(norm_text: str) -> tuple[list[str], list[str]]:
         assert yomi != "", f"Empty yomi: {word}"
         if yomi == "、":
             # wordは正規化されているので、`.`, `,`, `!`, `'`, `-`, `--` のいずれか
-            if word not in (
-                ".",
-                ",",
-                "!",
-                "'",
-                "-",
-                "--",
-            ):
+            if not set(word).issubset(set(punctuation)):  # 記号繰り返しか判定
                 # ここはpyopenjtalkが読めない文字等のときに起こる
-                raise ValueError(f"Cannot read: {word} in:\n{norm_text}")
+                if raise_yomi_error:
+                    raise YomiError(f"Cannot read: {word} in:\n{norm_text}")
+                logger.warning(f"Ignoring unknown: {word} in:\n{norm_text}")
+                continue
             # yomiは元の記号のままに変更
             yomi = word
         elif yomi == "？":
@@ -492,6 +531,9 @@ def handle_long(sep_phonemes: list[list[str]]) -> list[list[str]]:
     おそらく長音記号とダッシュを勘違いしていると思われるので、ダッシュに対応する音素`-`に変換する。
     """
     for i in range(len(sep_phonemes)):
+        if len(sep_phonemes[i]) == 0:
+            # 空白文字等でリストが空の場合
+            continue
         if sep_phonemes[i][0] == "ー":
             if i != 0:
                 prev_phoneme = sep_phonemes[i - 1][-1]
@@ -556,17 +598,16 @@ def kata2phoneme_list(text: str) -> list[str]:
     """
     原則カタカナの`text`を受け取り、それをそのままいじらずに音素記号のリストに変換。
     注意点：
-    - punctuationが来た場合（punctuationが1文字の場合がありうる）、処理せず1文字のリストを返す
+    - punctuationかその繰り返しが来た場合、punctuationたちをそのままリストにして返す。
     - 冒頭に続く「ー」はそのまま「ー」のままにする（`handle_long()`で処理される）
     - 文中の「ー」は前の音素記号の最後の音素記号に変換される。
     例：
     `ーーソーナノカーー` → ["ー", "ー", "s", "o", "o", "n", "a", "n", "o", "k", "a", "a", "a"]
     `?` → ["?"]
+    `!?!?!?!?!` → ["!", "?", "!", "?", "!", "?", "!", "?", "!"]
     """
-    if text in punctuation:
-        return [text]
-    elif text == "--":
-        return ["-", "-"]
+    if set(text).issubset(set(punctuation)):
+        return list(text)
     # `text`がカタカナ（`ー`含む）のみからなるかどうかをチェック
     if re.fullmatch(r"[\u30A0-\u30FF]+", text) is None:
         raise ValueError(f"Input must be katakana only: {text}")
@@ -589,12 +630,13 @@ def kata2phoneme_list(text: str) -> list[str]:
 
 
 if __name__ == "__main__":
-    tokenizer = AutoTokenizer.from_pretrained("./bert/deberta-v2-large-japanese")
-    text = "hello,こんにちは、世界ー！……"
+    tokenizer = AutoTokenizer.from_pretrained(
+        "./bert/deberta-v2-large-japanese-char-wwm"
+    )
+    text = "こんにちは、世界。"
     from text.japanese_bert import get_bert_feature
 
     text = text_normalize(text)
-    print(text)
 
     phones, tones, word2ph = g2p(text)
     bert = get_bert_feature(text, word2ph)

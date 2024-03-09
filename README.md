@@ -4,6 +4,7 @@ Bert-VITS2 with more controllable voice styles.
 
 https://github.com/litagin02/Style-Bert-VITS2/assets/139731664/e853f9a2-db4a-4202-a1dd-56ded3c562a0
 
+- **解説チュートリアル動画** [YouTube](https://youtu.be/aTUSzgDl1iY)　[ニコニコ動画](https://www.nicovideo.jp/watch/sm43391524)
 - [English README](docs/README_en.md)
 
 学習用コード
@@ -14,10 +15,12 @@ https://github.com/litagin02/Style-Bert-VITS2/assets/139731664/e853f9a2-db4a-420
 - [🤗 オンラインデモはこちらから](https://huggingface.co/spaces/litagin/Style-Bert-VITS2-JVNV)
 - [Zennの解説記事](https://zenn.dev/litagin/articles/034819a5256ff4)
 
-- [**リリースページ**](https://github.com/litagin02/Style-Bert-VITS2/releases/)、[更新履歴](docs/CHANGELOG.md)
+- [**リリースページ**](https://github.com/litagin02/Style-Bert-VITS2/releases/)、[更新履歴](/docs/CHANGELOG.md)
 
+  - 2024-02-26: ver 2.3 (辞書機能とエディター機能)
+  - 2024-02-09: ver 2.2
   - 2024-02-07: ver 2.1
-  - 2024-02-03: ver 2.0
+  - 2024-02-03: ver 2.0 (JP-Extra)
   - 2024-01-09: ver 1.3
   - 2023-12-31: ver 1.2
   - 2023-12-29: ver 1.1
@@ -36,7 +39,7 @@ This repository is based on [Bert-VITS2](https://github.com/fishaudio/Bert-VITS2
 
 ## 使い方
 
-<!-- 詳しくは[こちら](docs/tutorial.md)を参照してください。 -->
+CLIでの使い方は[こちら](/docs/CLI.md)を参照してください。
 
 ### 動作環境
 
@@ -48,13 +51,14 @@ This repository is based on [Bert-VITS2](https://github.com/fishaudio/Bert-VITS2
 
 Windowsを前提としています。
 
-1. [このzipファイル](https://github.com/litagin02/Style-Bert-VITS2/releases/download/2.1/Style-Bert-VITS2.zip)を**パスに日本語や空白が含まれない場所に**ダウンロードして展開します。
+1. [このzipファイル](https://github.com/litagin02/Style-Bert-VITS2/releases/download/2.3/Style-Bert-VITS2.zip)を**パスに日本語や空白が含まれない場所に**ダウンロードして展開します。
   - グラボがある方は、`Install-Style-Bert-VITS2.bat`をダブルクリックします。
   - グラボがない方は、`Install-Style-Bert-VITS2-CPU.bat`をダブルクリックします。CPU版では学習はできませんが、音声合成とマージは可能です。
 2. 待つと自動で必要な環境がインストールされます。
-3. その後、自動的に音声合成するためのWebUIが起動したらインストール成功です。デフォルトのモデルがダウンロードされるているので、そのまま遊ぶことができます。
+3. その後、自動的に音声合成するためのエディターが起動したらインストール成功です。デフォルトのモデルがダウンロードされるているので、そのまま遊ぶことができます。
 
-またアップデートをしたい場合は、`Update-Style-Bert-VITS2.bat`をダブルクリックしてください。ただし**1.x**から**2.x**へアップデートする場合は、[このbatファイル](https://github.com/litagin02/Style-Bert-VITS2/releases/download/2.1/Update-to-JP-Extra.bat)を`Style-Bert-VITS2`フォルダがあるフォルダ（`Update-Style-Bert-VITS2.bat`等があるフォルダ）へ保存してからダブルクリックしてください。
+またアップデートをしたい場合は、`Update-Style-Bert-VITS2.bat`をダブルクリックしてください。ただし以下の場合は、専用のアップデートbatファイルを`Style-Bert-VITS2`フォルダがあるフォルダ（`Update-Style-Bert-VITS2.bat`等があるフォルダ）へ保存してからダブルクリックしてください。
+- **2.3以前**から**2.3以上**（辞書・エディター付き）へアップデート: [Update-to-Dict-Editor.bat](https://github.com/litagin02/Style-Bert-VITS2/releases/download/2.3/Update-to-Dict-Editor.bat)
 
 #### GitやPython使える人
 
@@ -72,7 +76,12 @@ python initialize.py  # 必要なモデルとデフォルトTTSモデルをダ�
 
 ### 音声合成
 
-`App.bat`をダブルクリックか、`python app.py`するとWebUIが起動します（`python app.py --cpu`でCPUモードで起動、学習中チェックに便利です）。インストール時にデフォルトのモデルがダウンロードされているので、学習していなくてもそれを使うことができます。
+音声合成エディターは`Editor.bat`をダブルクリックか、`python server_editor.py --inbrowser`すると起動します（`--device cpu`でCPUモードで起動）。画面内で各セリフごとに設定を変えて原稿を作ったり、保存や読み込みや辞書の編集等ができます。
+インストール時にデフォルトのモデルがダウンロードされているので、学習していなくてもそれを使うことができます。
+
+エディター部分は[別リポジトリ](https://github.com/litagin02/Style-Bert-VITS2-Editor)に分かれています。
+
+バージョン2.2以前での音声合成WebUIは、`App.bat`をダブルクリックか、`python app.py`するとWebUIが起動します。
 
 音声合成に必要なモデルファイルたちの構造は以下の通りです（手動で配置する必要はありません）。
 ```
@@ -93,7 +102,10 @@ model_assets
 
 ### 学習
 
-学習には2-14秒程度の音声ファイルが少なくとも5個以上、またそれらの音声ファイルの書き起こしデータが必要です。
+- CLIでの学習の詳細は[こちら](docs/CLI.md)を参照してください。
+- paperspace上での学習の詳細は[こちら](docs/paperspace.md)、colabでの学習は[こちら](http://colab.research.google.com/github/litagin02/Style-Bert-VITS2/blob/master/colab.ipynb)を参照してください。
+
+学習には2-14秒程度の音声ファイルが複数と、それらの書き起こしデータが必要です。
 
 - 既存コーパスなどですでに分割された音声ファイルと書き起こしデータがある場合はそのまま（必要に応じて書き起こしファイルを修正して）使えます。下の「学習WebUI」を参照してください。
 - そうでない場合、（長さは問わない）音声ファイルのみがあれば、そこから学習にすぐに使えるようにデータセットを作るためのツールを同梱しています。
@@ -125,6 +137,10 @@ API仕様は起動後に`/docs`にて確認ください。
 
 - 入力文字数はデフォルトで100文字が上限となっています。これは`config.yml`の`server.limit`で変更できます。
 - デフォルトではCORS設定を全てのドメインで許可しています。できる限り、`config.yml`の`server.origins`の値を変更し、信頼できるドメインに制限ください(キーを消せばCORS設定を無効にできます)。
+
+また音声合成エディターのAPIサーバーは`python server_editor.py`で起動します。があまりまだ整備をしていません。[エディターのリポジトリ](https://github.com/litagin02/Style-Bert-VITS2-Editor)から必要な最低限のAPIしか現在は実装していません。
+
+音声合成エディターのウェブデプロイについては[このDockerfile](Dockerfile.deploy)を参考にしてください。
 
 ### マージ
 
@@ -168,6 +184,18 @@ In addition to the original reference (written below), I used the following repo
 - [EasyBertVits2](https://github.com/Zuntan03/EasyBertVits2)
 
 [The pretrained model](https://huggingface.co/litagin/Style-Bert-VITS2-1.0-base) and [JP-Extra version](https://huggingface.co/litagin/Style-Bert-VITS2-2.0-base-JP-Extra) is essentially taken from [the original base model of Bert-VITS2 v2.1](https://huggingface.co/Garydesu/bert-vits2_base_model-2.1) and [JP-Extra pretrained model of Bert-VITS2](https://huggingface.co/Stardust-minus/Bert-VITS2-Japanese-Extra), so all the credits go to the original author ([Fish Audio](https://github.com/fishaudio)):
+
+
+In addition, [text/user_dict/](text/user_dict) module is based on the following repositories:
+- [voicevox_engine](https://github.com/VOICEVOX/voicevox_engine)]
+and the license of this module is LGPL v3.
+
+## LICENSE
+
+This repository is licensed under the GNU Affero General Public License v3.0, the same as the original Bert-VITS2 repository. For more details, see [LICENSE](LICENSE).
+
+In addition, [text/user_dict/](text/user_dict) module is licensed under the GNU Lesser General Public License v3.0, inherited from the original VOICEVOX engine repository. For more details, see [LGPL_LICENSE](LGPL_LICENSE).
+
 
 
 Below is the original README.md.

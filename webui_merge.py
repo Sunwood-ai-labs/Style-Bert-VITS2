@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 import gradio as gr
 import numpy as np
@@ -10,7 +11,7 @@ import yaml
 from safetensors import safe_open
 from safetensors.torch import save_file
 
-from common.constants import DEFAULT_STYLE
+from common.constants import DEFAULT_STYLE, GRADIO_THEME
 from common.log import logger
 from common.tts_model import Model, ModelHolder
 
@@ -27,7 +28,7 @@ with open(os.path.join("configs", "paths.yml"), "r", encoding="utf-8") as f:
     # dataset_root = path_config["dataset_root"]
     assets_root = path_config["assets_root"]
 
-model_holder = ModelHolder(assets_root, device)
+model_holder = ModelHolder(Path(assets_root), device)
 
 
 def merge_style(model_name_a, model_name_b, weight, output_name, style_triple_list):
@@ -101,6 +102,29 @@ def merge_style(model_name_a, model_name_b, weight, output_name, style_triple_li
     return output_style_path, list(new_style2id.keys())
 
 
+def lerp_tensors(t, v0, v1):
+    return v0 * (1 - t) + v1 * t
+
+
+def slerp_tensors(t, v0, v1, dot_thres=0.998):
+    device = v0.device
+    v0c = v0.cpu().numpy()
+    v1c = v1.cpu().numpy()
+
+    dot = np.sum(v0c * v1c / (np.linalg.norm(v0c) * np.linalg.norm(v1c)))
+
+    if abs(dot) > dot_thres:
+        return lerp_tensors(t, v0, v1)
+
+    th0 = np.arccos(dot)
+    sin_th0 = np.sin(th0)
+    th_t = th0 * t
+
+    return torch.from_numpy(
+        v0c * np.sin(th0 - th_t) / sin_th0 + v1c * np.sin(th_t) / sin_th0
+    ).to(device)
+
+
 def merge_models(
     model_path_a,
     model_path_b,
@@ -109,6 +133,7 @@ def merge_models(
     speech_style_weight,
     tempo_weight,
     output_name,
+    use_slerp_instead_of_lerp,
 ):
     """model Aを起点に、model Bの各要素を重み付けしてマージする。
     safetensors形式を前提とする。"""
@@ -136,8 +161,8 @@ def merge_models(
         else:
             continue
         merged_model_weight[key] = (
-            model_a_weight[key] * (1 - weight) + model_b_weight[key] * weight
-        )
+            slerp_tensors if use_slerp_instead_of_lerp else lerp_tensors
+        )(weight, model_a_weight[key], model_b_weight[key])
 
     merged_model_path = os.path.join(
         assets_root, output_name, f"{output_name}.safetensors"
@@ -170,7 +195,10 @@ def merge_models_gr(
     voice_pitch_weight,
     speech_style_weight,
     tempo_weight,
+    use_slerp_instead_of_lerp,
 ):
+    if output_name == "":
+        return "Error: 新しいモデル名を入力してください。"
     merged_model_path = merge_models(
         model_path_a,
         model_path_b,
@@ -179,6 +207,7 @@ def merge_models_gr(
         speech_style_weight,
         tempo_weight,
         output_name,
+        use_slerp_instead_of_lerp,
     )
     return f"Success: モデルを{merged_model_path}に保存しました。"
 
@@ -190,6 +219,8 @@ def merge_style_gr(
     output_name,
     style_triple_list_str: str,
 ):
+    if output_name == "":
+        return "Error: 新しいモデル名を入力してください。", None
     style_triple_list = []
     for line in style_triple_list_str.split("\n"):
         if not line:
@@ -222,7 +253,7 @@ def simple_tts(model_name, text, style=DEFAULT_STYLE, style_weight=1.0):
     config_path = os.path.join(assets_root, model_name, "config.json")
     style_vec_path = os.path.join(assets_root, model_name, "style_vectors.npy")
 
-    model = Model(model_path, config_path, style_vec_path, device)
+    model = Model(Path(model_path), Path(config_path), Path(style_vec_path), device)
     return model.infer(text, style=style, style_weight=style_weight)
 
 
@@ -241,7 +272,20 @@ def load_styles_gr(model_name_a, model_name_b):
     with open(config_path_b, encoding="utf-8") as f:
         config_b = json.load(f)
     styles_b = list(config_b["data"]["style2id"].keys())
-    return gr.Textbox(value=", ".join(styles_a)), gr.Textbox(value=", ".join(styles_b))
+
+    return (
+        gr.Textbox(value=", ".join(styles_a)),
+        gr.Textbox(value=", ".join(styles_b)),
+        gr.TextArea(
+            label="スタイルのマージリスト",
+            placeholder=f"{DEFAULT_STYLE}, {DEFAULT_STYLE},{DEFAULT_STYLE}\nAngry, Angry, Angry",
+            value="\n".join(
+                f"{sty_a}, {sty_b}, {sty_a if sty_a != sty_b else ''}{sty_b}"
+                for sty_a in styles_a
+                for sty_b in styles_b
+            ),
+        ),
+    )
 
 
 initial_md = """
@@ -295,7 +339,7 @@ if len(model_names) == 0:
 initial_id = 0
 initial_model_files = model_holder.model_files_dict[model_names[initial_id]]
 
-with gr.Blocks(theme="NoCrypt/miku") as app:
+with gr.Blocks(theme=GRADIO_THEME) as app:
     gr.Markdown(initial_md)
     with gr.Accordion(label="使い方", open=False):
         gr.Markdown(initial_md)
@@ -354,6 +398,10 @@ with gr.Blocks(theme="NoCrypt/miku") as app:
                 maximum=1,
                 step=0.1,
             )
+            use_slerp_instead_of_lerp = gr.Checkbox(
+                label="線形補完のかわりに球面線形補完を使う",
+                value=False,
+            )
         with gr.Column(variant="panel"):
             gr.Markdown("## モデルファイル（safetensors）のマージ")
             model_merge_button = gr.Button("モデルファイルのマージ", variant="primary")
@@ -409,7 +457,7 @@ with gr.Blocks(theme="NoCrypt/miku") as app:
     load_style_button.click(
         load_styles_gr,
         inputs=[model_name_a, model_name_b],
-        outputs=[styles_a, styles_b],
+        outputs=[styles_a, styles_b, style_triple_list],
     )
 
     model_merge_button.click(
@@ -424,6 +472,7 @@ with gr.Blocks(theme="NoCrypt/miku") as app:
             voice_pitch_slider,
             speech_style_slider,
             tempo_slider,
+            use_slerp_instead_of_lerp,
         ],
         outputs=[info_model_merge],
     )
