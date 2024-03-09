@@ -17,5 +17,5 @@ RUN git clone https://huggingface.co/spaces/MakiAi/Style-Bert-VITS2-JVNV
 WORKDIR /app/Style-Bert-VITS2-JVNV
 
 # Pythonの依存関係をインストール
-# COPY requirements.txt ./
 RUN pip install -r requirements.txt
+RUN pip install streamlit
