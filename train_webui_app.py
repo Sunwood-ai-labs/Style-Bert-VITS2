@@ -2,39 +2,70 @@ import streamlit as st
 import os
 import yaml
 from webui_train import preprocess_all, get_path
+import initialize
+import threading
 
-def setup_environment():
-    """環境構築を行う関数"""
-    st.write("環境構築中...")
-    os.system("git clone https://github.com/litagin02/Style-Bert-VITS2.git")
-    os.chdir("Style-Bert-VITS2/")
-    os.system("pip install -r requirements.txt")
-    os.system("apt install libcublas11")
-    os.system("python initialize.py --skip_jvnv")
-    st.write("環境構築が完了しました。")
+def process_transcript(dataset_root, model_name):
+    # ファイルを読み込む
+    with open(dataset_root + f"/{model_name}/recitation_transcript_utf8.txt", "r", encoding="utf-8") as file:
+        lines = file.readlines()
 
-def setup_paths():
-    """パスの設定を行う関数"""
-    dataset_root = st.text_input("学習に必要なファイルや途中経過が保存されるディレクトリ", "/Data")
-    assets_root = st.text_input("学習結果（音声合成に必要なファイルたち）が保存されるディレクトリ", "/model_assets")
+    # コンバート
+    result = []
+    for line in lines:
+        strs = line.split(",")[0].split(":")
+        result.append("recitation" + strs[0][-3:] + ".wav|" + model_name + "|JP|" + strs[1] + "\n")
 
-    with open("configs/paths.yml", "w", encoding="utf-8") as f:
-        yaml.dump({"dataset_root": dataset_root, "assets_root": assets_root}, f)
+    # 変更をファイルに保存
+    with open(dataset_root + f"/{model_name}/esd.list", "w", encoding="utf-8") as file:
+        file.writelines(result)
 
-    os.makedirs(dataset_root, exist_ok=True)
+    # 去々年を含まない行だけを選択
+    cleaned_result = [line for line in result if "去々年" not in line]
 
-def preprocess_data():
-    """前処理を行う関数"""
+    # ファイルパスを指定
+    file_path = dataset_root + f"/{model_name}/esd.list"
+
+    # ファイルに変更を保存
+    with open(file_path, "w", encoding="utf-8") as file:
+        file.writelines(cleaned_result)
+
+def main():
+    st.title("Style-Bert-VITS2 学習アプリ")
+
+    # 初期設定
+    st.header("1. 初期設定")
+    dataset_root = st.text_input("学習データが保存されるディレクトリ", "/Data")
+    assets_root = st.text_input("学習結果が保存されるディレクトリ", "/model_assets")
+
+    if st.button("初期設定を開始"):
+        with st.spinner("初期設定中..."):
+            # プログレスバーを表示
+            progress_bar = st.progress(0)
+            initialize.main(dataset_root=dataset_root, assets_root=assets_root)
+            progress_bar.progress(100)
+        
+            st.success("初期設定が完了しました。")
+    
+
+        with open("configs/paths.yml", "w", encoding="utf-8") as f:
+            yaml.dump({"dataset_root": dataset_root, "assets_root": assets_root}, f)
+        st.success("初期設定が保存されました。")
+
+    # 学習の前処理
+    st.header("2. 学習の前処理")
     model_name = st.text_input("モデルの名前", "zundamon")
     use_jp_extra = st.checkbox("JP-Extra（日本語特化版）を使う", False)
-    batch_size = st.number_input("学習のバッチサイズ", value=4, min_value=1, step=1)
-    epochs = st.number_input("学習のエポック数", value=100, min_value=1, step=1)
-    save_every_steps = st.number_input("保存頻度（何ステップごとにモデルを保存するか）", value=1000, min_value=1, step=1)
+    batch_size = st.number_input("バッチサイズ", value=4, min_value=1, max_value=16)
+    epochs = st.number_input("エポック数", value=100, min_value=1)
+    save_every_steps = st.number_input("保存頻度（ステップ数）", value=1000, min_value=100)
     normalize = st.checkbox("音声ファイルの音量を正規化する", True)
-    trim = st.checkbox("音声ファイルの開始・終了にある無音区間を削除する", True)
-    yomi_error = st.selectbox("読みのエラーが出た場合にどうするか", ("raise", "skip", "use"))
+    trim = st.checkbox("音声ファイルの無音区間を削除する", True)
+    yomi_error_options = {"raise": "中断", "skip": "スキップ", "use": "無理やり使う"}
+    yomi_error = st.selectbox("読みのエラー時の処理", list(yomi_error_options.keys()), format_func=lambda x: yomi_error_options[x])
 
-    if st.button("前処理を開始"):
+    if st.button("学習の前処理を実行"):
+        process_transcript(dataset_root, model_name)
         preprocess_all(
             model_name=model_name,
             batch_size=batch_size,
@@ -53,68 +84,25 @@ def preprocess_data():
             log_interval=200,
             yomi_error=yomi_error
         )
-        st.write("前処理が完了しました。")
+        st.success("学習の前処理が完了しました。")
 
-def train_model():
-    """モデルの学習を行う関数"""
-    model_name = st.text_input("学習するモデル名", "zundamon")
-    use_jp_extra = st.checkbox("日本語特化版を使う", False)
-
-    dataset_path, _, _, _, config_path = get_path(model_name)
-
-    with open("default_config.yml", "r", encoding="utf-8") as f:
-        yml_data = yaml.safe_load(f)
-    yml_data["model_name"] = model_name
-    with open("config.yml", "w", encoding="utf-8") as f:
-        yaml.dump(yml_data, f, allow_unicode=True)
-
+    # 学習
+    st.header("3. 学習")
     if st.button("学習を開始"):
+        dataset_path, _, _, _, config_path = get_path(model_name)
+
+        with open("default_config.yml", "r", encoding="utf-8") as f:
+            yml_data = yaml.safe_load(f)
+        yml_data["model_name"] = model_name
+        with open("config.yml", "w", encoding="utf-8") as f:
+            yaml.dump(yml_data, f, allow_unicode=True)
+
         if use_jp_extra:
             os.system(f"python train_ms_jp_extra.py --config {config_path} --model {dataset_path} --assets_root {assets_root}")
         else:
             os.system(f"python train_ms.py --config {config_path} --model {dataset_path} --assets_root {assets_root}")
-        st.write("学習が完了しました。")
-
-def test_results():
-    """学習結果を試す関数"""
-    if st.button("学習結果を試す"):
-        os.system(f"python app.py --share --dir {assets_root}")
-
-def style_vectors():
-    """スタイルベクトルを生成する関数"""
-    if st.button("スタイルベクトルを生成"):
-        os.system("python webui_style_vectors.py --share")
-        st.write("スタイルベクトルの生成が完了しました。")
-
-def merge_models():
-    """モデルをマージする関数"""
-    if st.button("モデルをマージ"):
-        os.system("python webui_merge.py --share")
-        st.write("モデルのマージが完了しました。")
-
-def main():
-    st.title("Style-Bert-VITS2 Streamlit App")
-
-    st.header("0. 環境構築")
-    # setup_environment()
-
-    st.header("1. 初期設定")
-    setup_paths()
-
-    st.header("3. 学習の前処理")
-    preprocess_data()
-
-    st.header("4. 学習")
-    train_model()
-
-    st.header("学習結果を試す")
-    test_results()
-
-    st.header("5. スタイル分け")
-    style_vectors()
-
-    st.header("6. マージ")
-    merge_models()
+        
+        st.success("学習が完了しました。")
 
 if __name__ == "__main__":
     main()
