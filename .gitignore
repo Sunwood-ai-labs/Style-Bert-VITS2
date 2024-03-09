@@ -6,7 +6,6 @@ venv/
 
 
 /*.yml
-!docker-compose.yml
 !/default_config.yml
 /bert/*/*.bin
 /bert/*/*.h5
