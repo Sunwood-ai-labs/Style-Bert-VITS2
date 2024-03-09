@@ -20,10 +20,10 @@ services:
               count: 1
               capabilities: [ gpu ]
 
-  train_app:
+  webui-train:
     build:
       context: .
-      dockerfile: Dockerfile_train
+      dockerfile: Dockerfile.webui.train
     volumes:
       - .:/work
       - ./Data:/Data
@@ -31,7 +31,7 @@ services:
     ports:
       - "8590:8501"
     tty: true
-    command: python app.py --share --server-name 0.0.0.0
+    # command: python app.py --share --server-name 0.0.0.0
 
     deploy:
       resources:
