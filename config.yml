@@ -12,7 +12,7 @@ preprocess_text:
   train_path: train.list
   transcription_path: esd.list
   val_path: val.list
-  val_per_lang: 4
+  val_per_lang: 0
 resample:
   in_dir: raw
   out_dir: wavs
