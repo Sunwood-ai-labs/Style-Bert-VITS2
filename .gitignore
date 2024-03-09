@@ -27,3 +27,4 @@ venv/
 
 safetensors.ipynb
 Data/**/**/*.wav
+Data//**/**/*.txt
