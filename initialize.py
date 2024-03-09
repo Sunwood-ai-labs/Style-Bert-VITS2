@@ -91,7 +91,34 @@ def download_jvnv_models():
             )
 
 
-def main():
+
+def main(skip_jvnv=False, dataset_root=None, assets_root=None):
+    download_bert_models()
+
+    download_slm_model()
+
+    download_pretrained_models()
+
+    download_jp_extra_pretrained_models()
+
+    if not skip_jvnv:
+        download_jvnv_models()
+
+    if dataset_root is None and assets_root is None:
+        return
+
+    # Change default paths if necessary
+    paths_yml = Path("configs/paths.yml")
+    with open(paths_yml, "r", encoding="utf-8") as f:
+        yml_data = yaml.safe_load(f)
+    if assets_root is not None:
+        yml_data["assets_root"] = assets_root
+    if dataset_root is not None:
+        yml_data["dataset_root"] = dataset_root
+    with open(paths_yml, "w", encoding="utf-8") as f:
+        yaml.dump(yml_data, f, allow_unicode=True)
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip_jvnv", action="store_true")
     parser.add_argument(
@@ -108,31 +135,4 @@ def main():
     )
     args = parser.parse_args()
 
-    download_bert_models()
-
-    download_slm_model()
-
-    download_pretrained_models()
-
-    download_jp_extra_pretrained_models()
-
-    if not args.skip_jvnv:
-        download_jvnv_models()
-
-    if args.dataset_root is None and args.assets_root is None:
-        return
-
-    # Change default paths if necessary
-    paths_yml = Path("configs/paths.yml")
-    with open(paths_yml, "r", encoding="utf-8") as f:
-        yml_data = yaml.safe_load(f)
-    if args.assets_root is not None:
-        yml_data["assets_root"] = args.assets_root
-    if args.dataset_root is not None:
-        yml_data["dataset_root"] = args.dataset_root
-    with open(paths_yml, "w", encoding="utf-8") as f:
-        yaml.dump(yml_data, f, allow_unicode=True)
-
-
-if __name__ == "__main__":
-    main()
+    main(skip_jvnv=args.skip_jvnv, dataset_root=args.dataset_root, assets_root=args.assets_root)
