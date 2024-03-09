@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  style-bert:
+    build:
+      context: ./Style-Bert-VITS2
+      dockerfile: Dockerfile_external
+    volumes:
+      - ./:/app/Style-Bert-VITS2
+    ports:
+      - "8000:8000"
+      - "5000:5000"
+    tty: true
+    # working_dir: /app
+    command: python /app/Style-Bert-VITS2-JVNV/server_fastapi.py
+
+    
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
