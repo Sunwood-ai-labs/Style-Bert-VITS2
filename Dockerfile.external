@@ -11,11 +11,11 @@ RUN apt-get update && \
     git lfs install
 
 # リポジトリをクローン
-RUN git clone https://huggingface.co/spaces/MakiAi/Style-Bert-VITS2-JVNV
+# RUN git clone https://huggingface.co/spaces/MakiAi/Style-Bert-VITS2-JVNV
 
 # クローンしたリポジトリのディレクトリに移動
-WORKDIR /app/Style-Bert-VITS2-JVNV
+WORKDIR /app
 
 # Pythonの依存関係をインストール
-# COPY requirements.txt ./
+COPY ./Style-Bert-VITS2/requirements.txt ./
 RUN pip install -r requirements.txt
